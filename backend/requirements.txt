@@ -1,0 +1,14 @@
+fastapi
+uvicorn[standard]
+torch
+torchvision
+transformers
+opencv-python
+Pillow
+numpy
+python-multipart
+aiofiles
+huggingface_hub
+python-jose[cryptography]
+passlib[bcrypt]
+scipy
