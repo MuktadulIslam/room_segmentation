@@ -9,7 +9,7 @@ from transformers import SegformerForSemanticSegmentation, AutoImageProcessor, M
 import warnings
 import io
 import base64
-from typing import Optional
+from typing import Optional, Tuple
 import uvicorn
 import os
 
@@ -119,9 +119,25 @@ class SegmentationModel:
             print("Wall removal features will be disabled. Only floor removal will be available.")
             self.wall_support = False
     
-    def get_room_without_wall(self, image: Image.Image) -> Image.Image:
+    def _mask_to_base64(self, mask: np.ndarray) -> str:
+        """Convert binary mask to base64 image"""
+        # Convert mask to 0-255 range
+        mask_img = (mask * 255).astype(np.uint8)
+        
+        # Create PIL image
+        mask_pil = Image.fromarray(mask_img, mode='L')
+        
+        # Convert to base64
+        img_byte_arr = io.BytesIO()
+        mask_pil.save(img_byte_arr, format='PNG')
+        img_byte_arr.seek(0)
+        
+        return base64.b64encode(img_byte_arr.read()).decode('utf-8')
+    
+    def get_room_without_wall(self, image: Image.Image) -> Tuple[Image.Image, str]:
         """
-        Remove walls from room image and return image with transparent walls
+        Remove walls from room image and return image with transparent walls + mask
+        Returns: (processed_image, mask_base64)
         """
         if not self.wall_support:
             raise HTTPException(
@@ -183,16 +199,19 @@ class SegmentationModel:
             alpha_image = Image.fromarray(alpha.astype(np.uint8), mode='L')
             image_rgba.putalpha(alpha_image)
             
-            return image_rgba
+            # Convert mask to base64
+            mask_base64 = self._mask_to_base64(largest_wall_mask)
+            
+            return image_rgba, mask_base64
             
         except Exception as e:
             print(f"Error processing image for wall removal: {e}")
             raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
     
-    def get_room_without_floor(self, image: Image.Image) -> Image.Image:  # Fixed return type
+    def get_room_without_floor(self, image: Image.Image) -> Tuple[Image.Image, str]:
         """
-        Get room image with floor removed (transparent)
-        Returns: processed_image with transparent floor
+        Get room image with floor removed (transparent) and return mask
+        Returns: (processed_image, mask_base64)
         """
         try:
             # Convert to RGB first for processing, then to RGBA for transparency
@@ -233,7 +252,10 @@ class SegmentationModel:
             # Convert back to PIL Image
             result_pil = Image.fromarray(result_image.astype(np.uint8), 'RGBA')
             
-            return result_pil  # Return only the image, not a tuple
+            # Convert mask to base64
+            mask_base64 = self._mask_to_base64(floor_mask)
+            
+            return result_pil, mask_base64
             
         except Exception as e:
             print(f"Error processing image: {e}")
@@ -265,7 +287,7 @@ async def health_check():
 @app.post("/remove-wall-base64")
 async def remove_wall_base64(file: UploadFile = File(...)):
     """
-    Endpoint to remove walls from room image and return base64 encoded result
+    Endpoint to remove walls from room image and return base64 encoded result with mask
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -281,8 +303,8 @@ async def remove_wall_base64(file: UploadFile = File(...)):
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
-        # Get room image without walls
-        result_image = segmentation_model.get_room_without_wall(image)
+        # Get room image without walls and mask
+        result_image, mask_base64 = segmentation_model.get_room_without_wall(image)
         
         # Convert result to base64
         img_byte_arr = io.BytesIO()
@@ -294,6 +316,7 @@ async def remove_wall_base64(file: UploadFile = File(...)):
         return {
             "success": True,
             "result_base64": f"data:image/png;base64,{img_base64}",
+            "mask_base64": f"data:image/png;base64,{mask_base64}",
             "message": "Wall removal completed successfully"
         }
         
@@ -304,7 +327,7 @@ async def remove_wall_base64(file: UploadFile = File(...)):
 @app.post("/remove-floor-base64")
 async def remove_floor_base64(file: UploadFile = File(...)):
     """
-    Endpoint to remove floor from room image and return base64 encoded result with edges
+    Endpoint to remove floor from room image and return base64 encoded result with mask
     """
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
@@ -314,8 +337,8 @@ async def remove_floor_base64(file: UploadFile = File(...)):
         contents = await file.read()
         image = Image.open(io.BytesIO(contents))
         
-        # Get room image without floor and edge coordinates
-        result_image = segmentation_model.get_room_without_floor(image)
+        # Get room image without floor and mask
+        result_image, mask_base64 = segmentation_model.get_room_without_floor(image)
         
         # Convert result to base64
         img_byte_arr = io.BytesIO()
@@ -327,6 +350,7 @@ async def remove_floor_base64(file: UploadFile = File(...)):
         return {
             "success": True,
             "result_base64": f"data:image/png;base64,{img_base64}",
+            "mask_base64": f"data:image/png;base64,{mask_base64}",
             "message": "Floor removal completed successfully",
         }
         

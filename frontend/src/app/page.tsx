@@ -4,10 +4,11 @@
 import { useState, useRef } from 'react'
 import Image from 'next/image'
 
-// Simple API response interface
+// Updated API response interface to include mask
 interface ApiResponse {
   success: boolean
   result_base64: string
+  mask_base64: string
   message: string
 }
 
@@ -16,6 +17,7 @@ type ProcessingType = 'remove-floor' | 'remove-wall'
 export default function Home() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [processedImage, setProcessedImage] = useState<string | null>(null)
+  const [maskImage, setMaskImage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -41,6 +43,7 @@ export default function Home() {
       setSelectedFile(file)
       setError(null)
       setProcessedImage(null)
+      setMaskImage(null)
 
       // Create preview URL
       const reader = new FileReader()
@@ -77,6 +80,7 @@ export default function Home() {
       
       if (data.success) {
         setProcessedImage(data.result_base64)
+        setMaskImage(data.mask_base64)
       } else {
         throw new Error(data.message || 'Floor removal failed')
       }
@@ -114,6 +118,7 @@ export default function Home() {
       
       if (data.success) {
         setProcessedImage(data.result_base64)
+        setMaskImage(data.mask_base64)
       } else {
         throw new Error(data.message || 'Wall removal failed')
       }
@@ -136,6 +141,7 @@ export default function Home() {
   const resetImages = () => {
     setSelectedImage(null)
     setProcessedImage(null)
+    setMaskImage(null)
     setSelectedFile(null)
     setError(null)
     if (fileInputRef.current) {
@@ -152,16 +158,18 @@ export default function Home() {
     document.body.removeChild(link)
   }
 
+  const hasResults = processedImage && maskImage
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 py-8">
-      <div className="container mx-auto px-4 max-w-6xl">
+      <div className="container mx-auto px-4 max-w-7xl">
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-4">
             🏠 Room Segmentation Tool
           </h1>
           <p className="text-gray-600 text-lg">
-            Upload a room image to automatically remove floors or walls
+            Upload a room image to automatically remove floors or walls and see the detection masks
           </p>
         </div>
 
@@ -229,7 +237,7 @@ export default function Home() {
               </div>
             )}
 
-            {(selectedImage || processedImage) && (
+            {(selectedImage || hasResults) && (
               <button
                 onClick={resetImages}
                 className="mt-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
@@ -258,8 +266,8 @@ export default function Home() {
         </div>
 
         {/* Images Display */}
-        {(selectedImage || processedImage) && (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {(selectedImage || hasResults) && (
+          <div className={`grid gap-6 ${hasResults ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
             {/* Original Image */}
             <div className="bg-white rounded-lg shadow-lg p-6">
               <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">
@@ -277,6 +285,38 @@ export default function Home() {
               )}
             </div>
 
+            {/* Binary Mask */}
+            {maskImage && (
+              <div className="bg-white rounded-lg shadow-lg p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-xl font-semibold text-gray-800">
+                    {processingType === 'remove-floor' ? 'Floor Detection Mask' : 'Wall Detection Mask'}
+                  </h3>
+                  <button
+                    onClick={() => downloadImage(
+                      maskImage,
+                      processingType === 'remove-floor' ? 'floor-mask.png' : 'wall-mask.png'
+                    )}
+                    className="bg-purple-500 hover:bg-purple-600 text-white text-sm px-3 py-1 rounded transition-colors duration-200"
+                  >
+                    Download Mask
+                  </button>
+                </div>
+                
+                <div className="relative w-full h-80 rounded-lg overflow-hidden bg-black">
+                  <Image
+                    src={maskImage}
+                    alt={processingType === 'remove-floor' ? 'Floor mask' : 'Wall mask'}
+                    fill
+                    className="object-contain"
+                  />
+                </div>
+                <p className="text-sm text-gray-500 mt-2 text-center">
+                  White areas show detected {processingType === 'remove-floor' ? 'floor' : 'wall'} regions
+                </p>
+              </div>
+            )}
+
             {/* Processed Image */}
             <div className="bg-white rounded-lg shadow-lg p-6">
               <div className="flex items-center justify-between mb-4">
@@ -291,7 +331,7 @@ export default function Home() {
                     )}
                     className="bg-blue-500 hover:bg-blue-600 text-white text-sm px-3 py-1 rounded transition-colors duration-200"
                   >
-                    Download
+                    Download Result
                   </button>
                 )}
               </div>
@@ -307,11 +347,36 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="w-full h-80 rounded-lg bg-gray-50 border-2 border-dashed border-gray-300 flex items-center justify-center">
-                  <p className="text-gray-500">
+                  <p className="text-gray-500 text-center">
                     {processingType === 'remove-floor' ? 'Floor-free image will appear here' : 'Wall-free image will appear here'}
                   </p>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Results Summary */}
+        {hasResults && (
+          <div className="mt-6 bg-white rounded-lg shadow-lg p-6">
+            <h3 className="text-lg font-semibold text-gray-800 mb-3">Processing Results</h3>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+              <div className="text-center p-3 bg-blue-50 rounded-lg">
+                <p className="font-medium text-blue-800">Original Image</p>
+                <p className="text-blue-600">Input image for processing</p>
+              </div>
+              <div className="text-center p-3 bg-purple-50 rounded-lg">
+                <p className="font-medium text-purple-800">Binary Mask</p>
+                <p className="text-purple-600">
+                  Shows detected {processingType === 'remove-floor' ? 'floor' : 'wall'} areas in white
+                </p>
+              </div>
+              <div className="text-center p-3 bg-green-50 rounded-lg">
+                <p className="font-medium text-green-800">Final Result</p>
+                <p className="text-green-600">
+                  Image with {processingType === 'remove-floor' ? 'floor' : 'wall'} removed (transparent)
+                </p>
+              </div>
             </div>
           </div>
         )}
