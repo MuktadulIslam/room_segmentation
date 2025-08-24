@@ -12,3 +12,8 @@ huggingface_hub
 python-jose[cryptography]
 passlib[bcrypt]
 scipy
+
+torchaudio
+accelerate
+scikit-image
+optimum

@@ -189,10 +189,10 @@ class SegmentationModel:
             print(f"Error processing image for wall removal: {e}")
             raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
     
-    def get_room_without_floor(self, image: Image.Image) -> tuple[Image.Image, list]:
+    def get_room_without_floor(self, image: Image.Image) -> Image.Image:  # Fixed return type
         """
-        Get room image with floor removed (transparent) and return edge coordinates
-        Returns: tuple (processed_image, edge_coordinates_list)
+        Get room image with floor removed (transparent)
+        Returns: processed_image with transparent floor
         """
         try:
             # Convert to RGB first for processing, then to RGBA for transparency
@@ -215,29 +215,9 @@ class SegmentationModel:
                 (image_np.shape[1], image_np.shape[0]), 
                 interpolation=cv2.INTER_NEAREST
             )
-            
-            # Try multiple floor class indices (ADE20K dataset)
-            floor_classes = [3, 4, 5, 13, 52, 95]  # floor, earth, grass, road, rug, mat
-            
-            # Find the best floor class based on bottom half of image
-            bottom_half = segmentation_resized[segmentation_resized.shape[0]//2:, :]
-            bottom_unique, bottom_counts = np.unique(bottom_half, return_counts=True)
-            
-            # Select the floor class with most pixels in bottom half
-            best_floor_class = 3  # Default fallback
-            max_pixels = 0
-            
-            for floor_class in floor_classes:
-                if floor_class in bottom_unique:
-                    idx = np.where(bottom_unique == floor_class)[0]
-                    if len(idx) > 0:
-                        pixel_count = bottom_counts[idx[0]]
-                        if pixel_count > max_pixels:
-                            max_pixels = pixel_count
-                            best_floor_class = floor_class
-            
-            # Create floor mask
-            floor_mask = (segmentation_resized == best_floor_class).astype(np.uint8)
+
+            floor_class_index = 3
+            floor_mask = (segmentation_resized == floor_class_index).astype(np.uint8)
             
             # Clean up the mask if we found substantial floor area
             total_floor_pixels = np.sum(floor_mask)
@@ -246,9 +226,6 @@ class SegmentationModel:
                 floor_mask = cv2.morphologyEx(floor_mask, cv2.MORPH_CLOSE, kernel)
                 floor_mask = cv2.morphologyEx(floor_mask, cv2.MORPH_OPEN, kernel)
             
-            # Find edge coordinates where floor mask changes
-            edge_coordinates = self._extract_floor_edges(floor_mask)
-            
             # Apply mask to make floor transparent
             result_image = image_np.copy()
             result_image[:, :, 3] = (1 - floor_mask) * 255  # Set alpha channel
@@ -256,104 +233,12 @@ class SegmentationModel:
             # Convert back to PIL Image
             result_pil = Image.fromarray(result_image.astype(np.uint8), 'RGBA')
             
-            return result_pil, edge_coordinates
+            return result_pil  # Return only the image, not a tuple
             
         except Exception as e:
             print(f"Error processing image: {e}")
             raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
-
-    def _extract_floor_edges(self, floor_mask: np.ndarray) -> list:
-        """
-        Extract edge coordinates where the floor mask changes from 0 to 1 or 1 to 0
-        Returns a list of coordinate dictionaries with different edge types
-        """
-        try:
-            # Method 1: Find contours (external boundaries)
-            contours, _ = cv2.findContours(floor_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            
-            edge_data = {
-                "contours": [],
-                "gradient_edges": [],
-                "boundary_points": []
-            }
-            
-            # Extract contour points
-            for i, contour in enumerate(contours):
-                # Skip very small contours
-                if cv2.contourArea(contour) > 50:
-                    # Simplify contour to reduce number of points
-                    epsilon = 0.005 * cv2.arcLength(contour, True)
-                    simplified_contour = cv2.approxPolyDP(contour, epsilon, True)
-                    
-                    contour_points = []
-                    for point in simplified_contour:
-                        x, y = int(point[0][0]), int(point[0][1])
-                        contour_points.append({"x": x, "y": y})
-                    
-                    edge_data["contours"].append({
-                        "contour_id": i,
-                        "points": contour_points,
-                        "area": float(cv2.contourArea(contour))
-                    })
-            
-            # Method 2: Gradient-based edge detection for more precise edges
-            # Apply Gaussian blur to reduce noise
-            blurred_mask = cv2.GaussianBlur(floor_mask.astype(np.float32), (5, 5), 1.0)
-            
-            # Calculate gradients
-            grad_x = cv2.Sobel(blurred_mask, cv2.CV_32F, 1, 0, ksize=3)
-            grad_y = cv2.Sobel(blurred_mask, cv2.CV_32F, 0, 1, ksize=3)
-            
-            # Calculate gradient magnitude
-            gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
-            
-            # Threshold to find edge pixels
-            edge_threshold = 0.1
-            edge_pixels = gradient_magnitude > edge_threshold
-            
-            # Extract edge pixel coordinates
-            edge_y, edge_x = np.where(edge_pixels)
-            
-            # Subsample edge points to reduce data size (take every nth point)
-            step = max(1, len(edge_x) // 1000)  # Limit to ~1000 points
-            sampled_indices = np.arange(0, len(edge_x), step)
-            
-            for idx in sampled_indices:
-                x, y = int(edge_x[idx]), int(edge_y[idx])
-                edge_data["gradient_edges"].append({
-                    "x": x, 
-                    "y": y, 
-                    "magnitude": float(gradient_magnitude[y, x])
-                })
-            
-            # Method 3: Boundary points using morphological operations
-            # Create boundary by subtracting eroded mask from original
-            kernel = np.ones((3, 3), np.uint8)
-            eroded_mask = cv2.erode(floor_mask, kernel, iterations=1)
-            boundary_mask = floor_mask - eroded_mask
-            
-            # Extract boundary coordinates
-            boundary_y, boundary_x = np.where(boundary_mask > 0)
-            
-            # Subsample boundary points
-            step = max(1, len(boundary_x) // 500)  # Limit to ~500 points
-            sampled_indices = np.arange(0, len(boundary_x), step)
-            
-            for idx in sampled_indices:
-                x, y = int(boundary_x[idx]), int(boundary_y[idx])
-                edge_data["boundary_points"].append({"x": x, "y": y})
-            
-            return edge_data
-            
-        except Exception as e:
-            print(f"Error extracting edge coordinates: {e}")
-            return {
-                "contours": [],
-                "gradient_edges": [],
-                "boundary_points": [],
-                "error": str(e)
-            }
-
+    
 # Initialize model
 segmentation_model = SegmentationModel()
 
@@ -376,42 +261,6 @@ async def health_check():
         }
     }
 
-@app.post("/remove-wall")
-async def remove_wall_from_image(file: UploadFile = File(...)):
-    """
-    Endpoint to remove walls from room image and return image with transparent walls
-    """
-    # Validate file type
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
-    if not segmentation_model.wall_support:
-        raise HTTPException(
-            status_code=503, 
-            detail="Wall removal feature is not available. The required model could not be loaded."
-        )
-    
-    try:
-        # Read image
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        # Get room image without walls
-        result_image = segmentation_model.get_room_without_wall(image)
-        
-        # Convert result to bytes
-        img_byte_arr = io.BytesIO()
-        result_image.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0)
-        
-        return StreamingResponse(
-            io.BytesIO(img_byte_arr.read()),
-            media_type="image/png",
-            headers={"Content-Disposition": "attachment; filename=room_no_wall.png"}
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/remove-wall-base64")
 async def remove_wall_base64(file: UploadFile = File(...)):
@@ -451,36 +300,6 @@ async def remove_wall_base64(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/remove-floor")
-async def remove_floor_from_image(file: UploadFile = File(...)):
-    """
-    Endpoint to remove floor from room image and return image with transparent floor
-    """
-    # Validate file type
-    if not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="File must be an image")
-    
-    try:
-        # Read image
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents))
-        
-        # Get room image without floor
-        result_image = segmentation_model.get_room_without_floor(image)
-        
-        # Convert result to bytes
-        img_byte_arr = io.BytesIO()
-        result_image.save(img_byte_arr, format='PNG')
-        img_byte_arr.seek(0)
-        
-        return StreamingResponse(
-            io.BytesIO(img_byte_arr.read()),
-            media_type="image/png",
-            headers={"Content-Disposition": "attachment; filename=room_no_floor.png"}
-        )
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/remove-floor-base64")
 async def remove_floor_base64(file: UploadFile = File(...)):
@@ -496,7 +315,7 @@ async def remove_floor_base64(file: UploadFile = File(...)):
         image = Image.open(io.BytesIO(contents))
         
         # Get room image without floor and edge coordinates
-        result_image, edges = segmentation_model.get_room_without_floor(image)
+        result_image = segmentation_model.get_room_without_floor(image)
         
         # Convert result to base64
         img_byte_arr = io.BytesIO()
@@ -509,7 +328,6 @@ async def remove_floor_base64(file: UploadFile = File(...)):
             "success": True,
             "result_base64": f"data:image/png;base64,{img_base64}",
             "message": "Floor removal completed successfully",
-            "edges": edges  # Fixed: proper dictionary key-value syntax
         }
         
     except Exception as e:
