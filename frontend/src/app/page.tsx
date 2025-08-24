@@ -1,10 +1,11 @@
-// app/page.tsx
+// Integrated Room Segmentation with 3D Plane Generator
 'use client'
 
 import { useState, useRef } from 'react'
 import Image from 'next/image'
+import MaskImageTo3D from './MaskImageTo3D' // Import the component we just created
 
-// Updated API response interface to include mask
+// API response interface (same as before)
 interface ApiResponse {
   success: boolean
   result_base64: string
@@ -14,7 +15,7 @@ interface ApiResponse {
 
 type ProcessingType = 'remove-floor' | 'remove-wall'
 
-export default function Home() {
+export default function RoomSegmentationWith3D() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null)
   const [processedImage, setProcessedImage] = useState<string | null>(null)
   const [maskImage, setMaskImage] = useState<string | null>(null)
@@ -22,6 +23,8 @@ export default function Home() {
   const [error, setError] = useState<string | null>(null)
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [processingType, setProcessingType] = useState<ProcessingType>('remove-floor')
+  const [show3D, setShow3D] = useState(false)
+  const [vertices3D, setVertices3D] = useState(0)
   
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -44,6 +47,7 @@ export default function Home() {
       setError(null)
       setProcessedImage(null)
       setMaskImage(null)
+      setShow3D(false)
 
       // Create preview URL
       const reader = new FileReader()
@@ -144,6 +148,8 @@ export default function Home() {
     setMaskImage(null)
     setSelectedFile(null)
     setError(null)
+    setShow3D(false)
+    setVertices3D(0)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -158,6 +164,10 @@ export default function Home() {
     document.body.removeChild(link)
   }
 
+  const handle3DGeneration = (vertices: number) => {
+    setVertices3D(vertices)
+  }
+
   const hasResults = processedImage && maskImage
 
   return (
@@ -166,10 +176,10 @@ export default function Home() {
         {/* Header */}
         <div className="text-center mb-8">
           <h1 className="text-4xl font-bold text-gray-800 mb-4">
-            🏠 Room Segmentation Tool
+            🏠 Room Segmentation + 3D Visualization
           </h1>
           <p className="text-gray-600 text-lg">
-            Upload a room image to automatically remove floors or walls and see the detection masks
+            Upload a room image to remove floors/walls, see detection masks, and generate 3D planes
           </p>
         </div>
 
@@ -188,7 +198,7 @@ export default function Home() {
               htmlFor="image-upload"
               className="cursor-pointer bg-blue-500 hover:bg-blue-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 mb-4"
             >
-              Choose Image
+              Choose Room Image
             </label>
             
             {selectedFile && (
@@ -238,12 +248,23 @@ export default function Home() {
             )}
 
             {(selectedImage || hasResults) && (
-              <button
-                onClick={resetImages}
-                className="mt-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
-              >
-                Reset
-              </button>
+              <div className="flex gap-4">
+                <button
+                  onClick={resetImages}
+                  className="mt-4 bg-red-500 hover:bg-red-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+                >
+                  Reset
+                </button>
+                
+                {hasResults && (
+                  <button
+                    onClick={() => setShow3D(!show3D)}
+                    className="mt-4 bg-purple-500 hover:bg-purple-600 text-white font-semibold py-2 px-4 rounded-lg transition-colors duration-200"
+                  >
+                    {show3D ? 'Hide 3D View' : 'Show 3D View'}
+                  </button>
+                )}
+              </div>
             )}
           </div>
 
@@ -267,7 +288,7 @@ export default function Home() {
 
         {/* Images Display */}
         {(selectedImage || hasResults) && (
-          <div className={`grid gap-6 ${hasResults ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+          <div className={`grid gap-6 mb-8 ${hasResults ? 'grid-cols-1 lg:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
             {/* Original Image */}
             <div className="bg-white rounded-lg shadow-lg p-6">
               <h3 className="text-xl font-semibold text-gray-800 mb-4 text-center">
@@ -356,28 +377,13 @@ export default function Home() {
           </div>
         )}
 
-        {/* Results Summary */}
-        {hasResults && (
-          <div className="mt-6 bg-white rounded-lg shadow-lg p-6">
-            <h3 className="text-lg font-semibold text-gray-800 mb-3">Processing Results</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-              <div className="text-center p-3 bg-blue-50 rounded-lg">
-                <p className="font-medium text-blue-800">Original Image</p>
-                <p className="text-blue-600">Input image for processing</p>
-              </div>
-              <div className="text-center p-3 bg-purple-50 rounded-lg">
-                <p className="font-medium text-purple-800">Binary Mask</p>
-                <p className="text-purple-600">
-                  Shows detected {processingType === 'remove-floor' ? 'floor' : 'wall'} areas in white
-                </p>
-              </div>
-              <div className="text-center p-3 bg-green-50 rounded-lg">
-                <p className="font-medium text-green-800">Final Result</p>
-                <p className="text-green-600">
-                  Image with {processingType === 'remove-floor' ? 'floor' : 'wall'} removed (transparent)
-                </p>
-              </div>
-            </div>
+        {/* 3D Visualization Section */}
+        {show3D && maskImage && (
+          <div className="mb-8">
+            <MaskImageTo3D 
+              maskImage={maskImage}
+              onPlaneGenerated={handle3DGeneration}
+            />
           </div>
         )}
       </div>
